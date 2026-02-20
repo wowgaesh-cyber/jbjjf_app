@@ -321,7 +321,7 @@ def generate_full_html(df):
         position: absolute;
         width: 100%;
         text-align: right;
-        padding-right: 4px; /* 右の罫線との間にスペース (4px指定) */
+        padding-right: 8px; /* 右の罫線との間にスペース */
         font-size: 10px; /* 文字サイズ調整 */
         color: #a0a0a0;
         /* border-top: 1px solid #eee; */ /* 軸側の線は消す */
