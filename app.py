@@ -431,8 +431,7 @@ def generate_full_html(df):
     .current-time-line {{
         position: absolute;
         left: 0;
-        width: 9999px; /* 横スクロール時も全マット列に伸びるよう大きな幅を指定 */
-        border-top: 2px solid #ff4b4b; /* 少し太く */
+        border-top: 2px solid #ff4b4b;
         z-index: 999;
         pointer-events: none;
     }}
@@ -462,6 +461,12 @@ def generate_full_html(df):
     </style>
     """
 
+    # mats を先に計算してコンテンツ幅を確定する
+    df_valid['mat_int'] = pd.to_numeric(df_valid['mat'], errors='coerce').fillna(999).astype(int)
+    mats = sorted(df_valid['mat_int'].unique())
+    TIME_AXIS_W = 60; MAT_MARGIN = 4; MAT_COL_W = 260
+    total_content_w = TIME_AXIS_W + MAT_MARGIN + len(mats) * MAT_COL_W
+
     html_parts = [css, '<div class="timetable-wrapper">']
     
     jst_now = datetime.now(timezone.utc) + timedelta(hours=9)
@@ -472,7 +477,7 @@ def generate_full_html(df):
         line_top = (current_min - min_t) * PX_PER_MIN + HEADER_HEIGHT
         time_str = jst_now.strftime('%H:%M')
         html_parts.append(
-            f'<div class="current-time-line" style="top: {line_top}px;">'
+            f'<div class="current-time-line" style="top: {line_top}px; width: {total_content_w}px;">'
             f'<div class="current-time-badge">{time_str}</div>'
             f'</div>'
         )
@@ -489,9 +494,6 @@ def generate_full_html(df):
                 html_parts.append(label_html)
         current_t += 30
     html_parts.append('</div>')
-    
-    df_valid['mat_int'] = pd.to_numeric(df_valid['mat'], errors='coerce').fillna(999).astype(int)
-    mats = sorted(df_valid['mat_int'].unique())
     
     # グリッド線の位置とスタイルを計算
     grid_lines_html = []
