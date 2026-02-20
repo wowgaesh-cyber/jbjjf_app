@@ -310,11 +310,12 @@ def generate_full_html(df):
     .time-axis {{
         width: 60px; /* 少し広げる */
         flex-shrink: 0;
-        position: relative;
+        position: sticky; /* 横スクロール時に左端に固定 */
+        left: 0;
         /* border-right: 1px solid #e0e0e0; */ /* 二重線になるので削除 */
         margin-right: 4px; /* 時間ラベルと縦棒の間のスペース */
         background: #0e1117;
-        z-index: 5;
+        z-index: 20; /* マット列の上に表示 */
         margin-top: 40px; 
     }}
     .time-label {{
@@ -436,7 +437,7 @@ def generate_full_html(df):
         pointer-events: none;
     }}
     .current-time-badge {{
-        position: absolute;
+        position: sticky;
         left: 0;
         background-color: #ff4b4b;
         color: white;
@@ -445,7 +446,8 @@ def generate_full_html(df):
         font-size: 12px;
         font-weight: bold;
         z-index: 1000;
-        transform: translate(-10%, -50%); /* 左端に配置し、上下中央揃え */
+        transform: translateY(-50%);
+        display: inline-block;
     }}
     
     /* Ensure clickability */
