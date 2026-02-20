@@ -411,6 +411,10 @@ def generate_full_html(df):
         z-index: 30;
         background-color: #363945;
     }}
+    .match-card.card-front {{
+        background-color: #363945;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }}
 
     /* カード内のテキスト */
     .card-time {{
@@ -570,7 +574,7 @@ def generate_full_html(df):
             belt_color = get_belt_color(cat_text)
             
             card_html = (
-                f'<div class="match-card" style="top: {top_px}px; height: {height_px}px; left: {left_pct}%; width: {width_pct}%; z-index: {z_index}; border-left-color: {belt_color};" >'
+                f'<div class="match-card" data-base-z="{z_index}" onclick="bringToFront(this, event)" style="top: {top_px}px; height: {height_px}px; left: {left_pct}%; width: {width_pct}%; z-index: {z_index}; border-left-color: {belt_color};" >'
                 f'<div class="card-time">{row["start_time"]}</div>'
                 f'<div class="card-player">#{display_no} {row["name"]}</div>'
                 f'</div>'
@@ -584,18 +588,44 @@ def generate_full_html(df):
     # iframe内でのクリックを検知してサイドバーを閉じるスクリプトを追加
     html_parts.append("""
     <script>
+    // 前面に出す処理
+    function bringToFront(card, e) {
+        e.stopPropagation(); // バブリング防止（サイドバー閉じ処理と競合しないよう）
+        var body = card.closest('.mat-body');
+        if (!body) return;
+        var allCards = body.querySelectorAll('.match-card');
+        // 一度全カードをリセット
+        allCards.forEach(function(c) {
+            var baseZ = parseInt(c.getAttribute('data-base-z') || '10');
+            c.style.zIndex = baseZ;
+            c.classList.remove('card-front');
+        });
+        // クリックされたカードを最前面へ
+        card.style.zIndex = 999;
+        card.classList.add('card-front');
+
+        // サイドバーも閉じる
+        notifyParentToClose(e);
+    }
+
     function notifyParentToClose(e) {
-        console.log("Timetable clicked/touched", e.type);
         if (window.parent && window.parent.closeStreamlitSidebar) {
-            console.log("Calling window.parent.closeStreamlitSidebar");
             window.parent.closeStreamlitSidebar();
-        } else {
-            console.log("window.parent.closeStreamlitSidebar not found");
         }
     }
 
-    // Use capture phase to ensure we catch events
-    window.addEventListener('click', notifyParentToClose, true);
+    // カード以外の場所クリックでリセット
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.match-card')) {
+            document.querySelectorAll('.match-card').forEach(function(c) {
+                var baseZ = parseInt(c.getAttribute('data-base-z') || '10');
+                c.style.zIndex = baseZ;
+                c.classList.remove('card-front');
+            });
+            notifyParentToClose(e);
+        }
+    });
+
     window.addEventListener('touchstart', notifyParentToClose, {passive: true, capture: true});
     </script>
     """)
