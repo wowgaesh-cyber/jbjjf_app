@@ -431,7 +431,7 @@ def generate_full_html(df):
     .current-time-line {{
         position: absolute;
         left: 0;
-        right: 0;
+        width: 9999px; /* 横スクロール時も全マット列に伸びるよう大きな幅を指定 */
         border-top: 2px solid #ff4b4b; /* 少し太く */
         z-index: 999;
         pointer-events: none;
