@@ -312,7 +312,7 @@ def generate_full_html(df):
         flex-shrink: 0;
         position: sticky; /* 横スクロール時に左端に固定 */
         left: 0;
-        /* border-right: 1px solid #e0e0e0; */ /* 二重線になるので削除 */
+        border-right: 1px solid #e0e0e0; /* 縦線をstickyのtime-axis側に設置 */
         margin-right: 4px; /* 時間ラベルと縦棒の間のスペース */
         background: #0e1117;
         z-index: 20; /* マット列の上に表示 */
@@ -518,8 +518,8 @@ def generate_full_html(df):
         
         html_parts.append(f'<div class="mat-header">{mat_label}</div>')
         
-        # 最初のカラムだけ左ボーダーを mat-body に追加
-        extra_style = "border-left: 1px solid #e0e0e0;" if i == 0 else ""
+        # 縦線はtime-axis側に移動したため、mat-bodyには不要
+        extra_style = ""
         html_parts.append(f'<div class="mat-body" style="min-height: {(max_t - min_t) * PX_PER_MIN}px; {extra_style}">')
         
         # グリッド線を追加
