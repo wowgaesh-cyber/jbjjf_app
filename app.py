@@ -886,7 +886,18 @@ if data:
     
     if not df_res.empty:
         html_code = generate_full_html(df_res)
-        components.html(html_code, height=1300, scrolling=False)
+        # 必要な高さをデータから動的計算
+        def _t2m(t):
+            try: h, m = map(int, t.split(':')); return h * 60 + m
+            except: return None
+        _times = df_res['start_time'].apply(_t2m).dropna()
+        if not _times.empty:
+            _min_t = int(_times.min()) - 30
+            _max_t = int(_times.max()) + 60
+            _iframe_h = int((_max_t - _min_t) * 2.2) + 40 + 40  # header + 余白
+        else:
+            _iframe_h = 600
+        components.html(html_code, height=_iframe_h, scrolling=False)
     else:
         st.info(f"「{target}」の試合は見つかりませんでした。")
         
