@@ -312,7 +312,7 @@ def generate_full_html(df):
         flex-shrink: 0;
         position: relative;
         /* border-right: 1px solid #e0e0e0; */ /* 二重線になるので削除 */
-        margin-right: 0;
+        margin-right: 4px; /* 時間ラベルと縦棒の間のスペース */
         background: #0e1117;
         z-index: 5;
         margin-top: 40px; 
@@ -321,7 +321,7 @@ def generate_full_html(df):
         position: absolute;
         width: 100%;
         text-align: right;
-        padding-right: 8px; /* 右の罫線との間にスペース */
+        padding-right: 2px;
         font-size: 10px; /* 文字サイズ調整 */
         color: #a0a0a0;
         /* border-top: 1px solid #eee; */ /* 軸側の線は消す */
