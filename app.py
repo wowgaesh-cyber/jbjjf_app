@@ -43,7 +43,7 @@ def get_belt_color(category_text):
         return "#ff4b4b" # デフォルト
 
 # --- データ取得ロジック ---
-SPS_URL = "https://docs.google.com/spreadsheets/u/1/d/e/2PACX-1vTIze3yp6Wwt0yYFOm10iOcSjUq8_jb_4AdtcwKO6_pjCYTp_k7F5PsEpSMgY8t3xXpoRPsJ--d9Zew/pub?output=xlsx"
+SPS_URL = "https://docs.google.com/spreadsheets/u/1/d/e/2PACX-1vSXX7C31vhQh9qBPo_Qs6pKE8QfRiPiAD9HYgWQWLVHwGxesIFr2417ieMHLqMtouZJyImsUmuKLUeK/pub?output=xlsx"
 
 @st.cache_data(ttl=60)
 def load_data_and_title():
@@ -608,6 +608,33 @@ def generate_full_html(df):
 with st.spinner("Loading..."):
     data, tournament_title = load_data_and_title()
 
+# --- OGP / SNS共有用メタタグ ---
+_ogp_title = f"🥋 {tournament_title}" if tournament_title else "🥋 JBJJF タイムテーブル"
+_ogp_desc  = f"{tournament_title} の団体別タイムテーブル。出場選手の試合スケジュールを確認できます。" if tournament_title else "JBJJF 出場選手の試合スケジュールを団体別に確認できます。"
+
+# ホスト名を動的に取得してOGP画像の絶対URLを構築
+try:
+    _host = st.context.headers.get("host", "")
+    _base_url = f"http://{_host}" if _host else ""
+except Exception:
+    _base_url = ""
+_ogp_image = f"{_base_url}/app/static/ogp.png" if _base_url else "/app/static/ogp.png"
+
+st.markdown(f"""
+<meta property="og:type"        content="website">
+<meta property="og:title"       content="{_ogp_title}">
+<meta property="og:description" content="{_ogp_desc}">
+<meta property="og:image"       content="{_ogp_image}">
+<meta property="og:image:width"  content="1200">
+<meta property="og:image:height" content="630">
+<meta name="description"        content="{_ogp_desc}">
+<meta name="twitter:card"       content="summary_large_image">
+<meta name="twitter:title"      content="{_ogp_title}">
+<meta name="twitter:description" content="{_ogp_desc}">
+<meta name="twitter:image"      content="{_ogp_image}">
+""", unsafe_allow_html=True)
+
+
 # --- カスタムCSS ---
 st.markdown("""
 <style>
@@ -796,16 +823,29 @@ st.markdown("""
 if data:
     all_dojos = extract_all_dojos(data)
 
-    # selected_dojo が設定されていない、または存在しない場合はリストの先頭をセット
+    # --- URLクエリパラメータから団体を復元 ---
+    _qp_dojo = st.query_params.get('dojo', '')
+
+    # selected_dojo が未設定 or 無効の場合は初期化
     if 'selected_dojo' not in st.session_state or st.session_state['selected_dojo'] not in all_dojos:
         if all_dojos:
-             st.session_state['selected_dojo'] = all_dojos[0]
+            # クエリパラメータが有効な団体名なら優先して使用
+            if _qp_dojo in all_dojos:
+                st.session_state['selected_dojo'] = _qp_dojo
+            else:
+                st.session_state['selected_dojo'] = all_dojos[0]
+    elif _qp_dojo in all_dojos and _qp_dojo != st.session_state['selected_dojo']:
+        # URLが手動で変更された場合にも対応
+        st.session_state['selected_dojo'] = _qp_dojo
 
-    # サイドバー: 道場選択
+    # 現在の選択をURLに反映（常に最新を保持）
+    st.query_params['dojo'] = st.session_state['selected_dojo']
+
+    # サイドバー: 団体選択
     # st.sidebar.markdown("---") # 削除
     
     # 見出し (16px)
-    st.sidebar.markdown(f'<div class="sidebar-dojo-header">道場 ({len(all_dojos)})</div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="sidebar-dojo-header">団体 ({len(all_dojos)})</div>', unsafe_allow_html=True)
     
     # 現在の選択を初期値として設定
     initial_index = 0
@@ -813,15 +853,16 @@ if data:
         initial_index = all_dojos.index(st.session_state['selected_dojo'])
     
     selected_dojo = st.sidebar.radio(
-        label="",
+        label="団体選択",
         options=all_dojos,
-        label_visibility="collapsed", 
+        label_visibility="collapsed",
         index=initial_index,
-        format_func=lambda x: x  # チェックマークなし
+        format_func=lambda x: x
     )
-    
+
     if selected_dojo != st.session_state['selected_dojo']:
         st.session_state['selected_dojo'] = selected_dojo
+        st.query_params['dojo'] = selected_dojo  # URLに反映
         st.rerun()
 
     # 1. ヘッダー (Shareボタン機能修正: Event Delegation + レイアウト調整)
@@ -847,14 +888,14 @@ if data:
     else:
         st.info(f"「{target}」の試合は見つかりませんでした。")
         
-    # --- モバイル用サイドバー自動開閉 & クリップボード共有スクリプト ---
+    # --- モバイル用クリップボード共有スクリプト ---
     components.html("""
     <script>
     (function() {
         const doc = window.parent.document;
         const STORAGE_KEY = 'streamlit_mobile_sidebar_trigger';
         
-        // --- Clipboard Logic (Event Delegation) ---
+        // --- Clipboard Logic ---
         const copyToClipboard = () => {
              const url = window.parent.location.href;
              const showSnack = () => {
@@ -864,157 +905,140 @@ if data:
                      setTimeout(() => { x.className = x.className.replace("snackbar show", "snackbar"); }, 2000);
                  }
              };
-
              if (navigator && navigator.clipboard) {
-                 navigator.clipboard.writeText(url).then(showSnack).catch(err => console.error(err));
+                 navigator.clipboard.writeText(url).then(showSnack).catch(() => fallbackCopy(url, showSnack));
              } else {
-                 // Fallback
-                 const textArea = doc.createElement("textarea");
-                 textArea.value = url;
-                 
-                 // Prevent keyboard from showing on mobile
-                 textArea.setAttribute("readonly", "");
-                 textArea.style.position = "absolute";
-                 textArea.style.left = "-9999px";
-                 
-                 doc.body.appendChild(textArea);
-                 
-                 // Select text
-                 textArea.select();
-                 textArea.setSelectionRange(0, 99999); // For mobile devices
-                 
-                 try {
-                     const successful = doc.execCommand('copy');
-                     if (successful) showSnack();
-                 } catch (err) {}
-                 doc.body.removeChild(textArea);
+                 fallbackCopy(url, showSnack);
              }
         };
 
-        // --- Helper: Close the Sidebar ---
+        const fallbackCopy = (url, cb) => {
+            const ta = doc.createElement("textarea");
+            ta.value = url;
+            ta.setAttribute("readonly", "");
+            ta.style.cssText = "position:absolute;left:-9999px";
+            doc.body.appendChild(ta);
+            ta.select();
+            ta.setSelectionRange(0, 99999);
+            try { if (doc.execCommand('copy')) cb(); } catch(e) {}
+            doc.body.removeChild(ta);
+        };
+
+        // --- Close Sidebar ---
         const closeSidebar = () => {
-            const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-            if (!sidebar) return;
-
-            // Method 1: Click the native "X" button inside the sidebar header
-            const closeBtn = sidebar.querySelector('button[kind="header"]');
-            if (closeBtn) {
-                closeBtn.click();
-                return;
-            }
-
-            // Method 2: Click the collapse control
-            const allButtons = doc.querySelectorAll('button[data-testid="stSidebarCollapseButton"], button[data-testid="stSidebarCollapsedControl"]');
-            for (const btn of allButtons) {
-                if (btn.offsetParent !== null) {
+            // Try collapse button first
+            const btns = doc.querySelectorAll(
+                'button[data-testid="stSidebarCollapseButton"], button[data-testid="stSidebarCollapsedControl"]'
+            );
+            for (const btn of btns) {
+                // Find visible button
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {
                     btn.click();
                     return;
                 }
             }
-            
-            // Method 3: Dispatch Escape key
-            const ev = new KeyboardEvent('keydown', { 
-                key: 'Escape', code: 'Escape', 
-                keyCode: 27, which: 27, 
-                bubbles: true, cancelable: true, 
-                view: window.parent 
-            });
-            doc.dispatchEvent(ev);
+            // Fallback: Escape key
+            doc.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
+                bubbles: true, cancelable: true, view: window.parent
+            }));
         };
 
-        // --- Logic 1: Handle "Close on Selection" (After Reload) ---
+        // --- Check if sidebar is open ---
+        const isSidebarOpen = () => {
+            const sb = doc.querySelector('section[data-testid="stSidebar"]');
+            if (!sb) return false;
+            return sb.getBoundingClientRect().width > 50;
+        };
+
+        // --- Handle touch/click on parent document ---
+        const handleInteraction = (e) => {
+            // Share button
+            if (e.target.closest && (e.target.closest('#share-btn') || e.target.closest('.share-button'))) {
+                copyToClipboard();
+                return;
+            }
+
+            // Only on mobile
+            const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
+            if (vw > 992) return;
+            if (!isSidebarOpen()) return;
+
+            const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+            if (!sidebar) return;
+
+            const insideSidebar = sidebar.contains(e.target);
+
+            if (insideSidebar) {
+                // Dojo selection: close sidebar when radio label is tapped
+                const label = e.target.closest && e.target.closest('label');
+                if (label && label.querySelector('input[type="radio"]')) {
+                    sessionStorage.setItem(STORAGE_KEY, Date.now().toString());
+                    // Slight delay so Streamlit registers the selection first
+                    setTimeout(closeSidebar, 50);
+                }
+            } else {
+                // Outside sidebar: close it
+                // But ignore the toggle button itself
+                const toggle = e.target.closest && (
+                    e.target.closest('button[data-testid="stSidebarCollapseButton"]') ||
+                    e.target.closest('button[data-testid="stSidebarCollapsedControl"]')
+                );
+                if (!toggle) {
+                    closeSidebar();
+                }
+            }
+        };
+
+        // --- After-reload: ensure sidebar stays closed ---
         const checkAndCloseOnLoad = () => {
-             const trigger = sessionStorage.getItem(STORAGE_KEY);
-             if (trigger && (Date.now() - parseInt(trigger) < 10000)) { // 10s timeout
-                // Only if on mobile
-                const width = window.parent.innerWidth || doc.documentElement.clientWidth;
-                if (width <= 992) { 
-                    let attempts = 0;
-                    const interval = setInterval(() => {
-                        const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-                        if (sidebar && sidebar.getBoundingClientRect().width > 50) {
-                            closeSidebar();
-                        }
-                        
-                        attempts++;
-                        if ((sidebar && sidebar.getBoundingClientRect().width < 50) || attempts > 10) {
-                            clearInterval(interval);
+            const trigger = sessionStorage.getItem(STORAGE_KEY);
+            if (trigger && (Date.now() - parseInt(trigger) < 8000)) {
+                const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
+                if (vw <= 992) {
+                    let tries = 0;
+                    const iv = setInterval(() => {
+                        if (isSidebarOpen()) closeSidebar();
+                        tries++;
+                        if (!isSidebarOpen() || tries > 15) {
+                            clearInterval(iv);
                             sessionStorage.removeItem(STORAGE_KEY);
                         }
                     }, 200);
                 } else {
                     sessionStorage.removeItem(STORAGE_KEY);
                 }
-             }
+            }
         };
 
-        // --- Logic 2: Event Listeners ---
-        const attachListeners = () => {
-            if (doc.body.dataset.mobileSidebarFixed === 'true') return;
-            
-            // Capture clicks anywhere
-            doc.addEventListener('click', (e) => {
-                // --- Share Button Logic ---
-                const shareBtn = e.target.closest('#share-btn') || e.target.closest('.share-button');
-                if (shareBtn) {
-                    copyToClipboard();
-                    return;
-                }
+        // --- Attach listeners (once) ---
+        const attach = () => {
+            if (doc.body.dataset.sidebarListenerAttached === '1') return;
+            doc.body.dataset.sidebarListenerAttached = '1';
 
-                // --- Sidebar Logic ---
-                const width = window.parent.innerWidth || doc.documentElement.clientWidth;
-                if (width > 992) return; 
-                
-                const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-                if (!sidebar) return;
-                
-                const rect = sidebar.getBoundingClientRect();
-                const isOpen = rect.width > 50; 
-                
-                if (!isOpen) return;
-
-                // Case 1: Click INSIDE Sidebar -> Check if it's a Dojo Selection
-                if (sidebar.contains(e.target)) {
-                    // Check if it's part of the radio group
-                    // Using .closest to find the label wrapping the radio input
-                    const label = e.target.closest('label');
-                    if (label && label.querySelector('input[type="radio"]')) {
-                        // Set flag for post-reload closing (backup)
-                        sessionStorage.setItem(STORAGE_KEY, Date.now().toString());
-                        // Close immediately
-                        closeSidebar();
-                    }
-                }
-                
-                // Case 2: Click OUTSIDE Sidebar
-                else {
-                    const toggleBtn = doc.querySelector('button[data-testid="stSidebarCollapseButton"]');
-                    const toggleBtn2 = doc.querySelector('button[data-testid="stSidebarCollapsedControl"]');
-                    
-                    if ((toggleBtn && toggleBtn.contains(e.target)) || 
-                        (toggleBtn2 && toggleBtn2.contains(e.target))) {
-                        return;
-                    }
-
-                    e.stopPropagation();
-                    closeSidebar();
-                }
-            }, { capture: true }); 
-
-            doc.body.dataset.mobileSidebarFixed = 'true';
+            // touchstart for mobile immediacy, click for desktop fallback
+            doc.addEventListener('touchstart', handleInteraction, { capture: true, passive: true });
+            doc.addEventListener('click', handleInteraction, { capture: true });
         };
 
+        // Run
         checkAndCloseOnLoad();
-        attachListeners();
-        
-        const observer = new MutationObserver(() => {
-            attachListeners();
-        });
-        observer.observe(doc.body, { childList: true, subtree: true });
+        if (doc.body) {
+            attach();
+        } else {
+            doc.addEventListener('DOMContentLoaded', attach);
+        }
+
+        // Re-attach after Streamlit re-renders
+        const obs = new MutationObserver(attach);
+        obs.observe(doc.body || doc.documentElement, { childList: true, subtree: false });
 
     })();
     </script>
     """, height=0, width=0)
+
+
 
 else:
     st.error("データ読み込みエラー")
