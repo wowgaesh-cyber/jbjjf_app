@@ -43,7 +43,7 @@ def get_belt_color(category_text):
         return "#ff4b4b" # デフォルト
 
 # --- データ取得ロジック ---
-SPS_URL = "https://docs.google.com/spreadsheets/u/1/d/e/2PACX-1vSXX7C31vhQh9qBPo_Qs6pKE8QfRiPiAD9HYgWQWLVHwGxesIFr2417ieMHLqMtouZJyImsUmuKLUeK/pub?output=xlsx"
+SPS_URL = "https://docs.google.com/spreadsheets/u/1/d/e/2PACX-1vQoIxREOSKT14WEJRKj3VuOXhodOxydJusm-c9BZD-d9idHwXQHeCkEJJd8HzxAyH6OoeMxn9UMne2a/pub?output=xlsx"
 
 @st.cache_data(ttl=60)
 def load_data_and_title():
@@ -70,7 +70,7 @@ def clean_val(v): return re.sub(r'\.0$', '', str(v).strip())
 
 def is_valid_id(text):
     text = clean_val(text)
-    if text in ["1", "nan", "", "-", "No", "•", "Result"]: return False
+    if text in ["nan", "", "-", "No", "•", "Result"]: return False
     if re.match(r'^\d+-\d+$', text): return True
     if text.isdigit() and int(text) < 999: return True
     return False
@@ -118,12 +118,34 @@ def extract_all_dojos(sheets):
         return bool(re.search(r'[a-zA-Z]', text))
         
     def is_likely_player(text):
-        # JBJJF players usually have both Japanese and English names, e.g. "松本将樹 Masaki Matsumoto"
-        # Must have both scripts
-        if not (has_japanese(text) and has_alpha(text)): return False
-        # Must match pattern: Japanese + Space + Alpha (e.g. "古川雄大 Yudai Furukawa")
-        # \u3000 is full-width space
-        return bool(re.search(r'[一-龥ぁ-んァ-ン]+[ \u3000]+[a-zA-Z]', text))
+        # Pattern 1: 日本語＋英語混在 (e.g. "松本将樹 Masaki Matsumoto")
+        if has_japanese(text) and has_alpha(text):
+            return bool(re.search(r'[一-龥ぁ-んァ-ン]+[ \u3000]+[a-zA-Z]', text))
+        # Pattern 2: 純英語の選手名 (e.g. "Jungwoo Lee", "Pedro Iamashita")
+        #   - 2〜4語の英字のみ単語
+        #   - タイトルケース（全大文字ではない）
+        #   - BJJ系キーワードやハイフンを含まない
+        if has_alpha(text) and not has_japanese(text):
+            BJJ_WORDS = {"GYM", "JIU", "JITSU", "JIUJITSU", "ACADEMY", "CLUB",
+                         "TEAM", "DIEM", "CARPE", "BOA", "SORTE", "FORCE",
+                         "TRIANGLE", "ALLIANCE", "GRACIE", "MMA", "BJJ",
+                         "ESCUDO", "IMPACTO", "SISU", "SEISHINKAN"}
+            words = text.split()
+            if 2 <= len(words) <= 4:
+                valid = True
+                for w in words:
+                    if not re.match(r'^[A-Za-z]+$', w):  # ハイフン等を含む→道場名
+                        valid = False; break
+                    if w == w.upper() and len(w) > 2:    # 全大文字→略称/組織名
+                        valid = False; break
+                    if not w[0].isupper():                # 先頭大文字でない
+                        valid = False; break
+                    if w.upper() in BJJ_WORDS:
+                        valid = False; break
+                if valid:
+                    return True
+        return False
+
 
     def is_likely_dojo(text):
         # Dojos are usually either all Alpha (SCORPION GYM) or all Japanese (ねわざワールド)
@@ -181,6 +203,14 @@ def get_schedule_data(sheets, target_dojo):
                     if r > 0:
                         player_name = clean_val(df.iloc[r-1, c])
                         if player_name and player_name != "nan" and target_dojo not in player_name and len(player_name) >= 2:
+                            # 選手名として無効なキーワードはスキップ
+                            INVALID_PLAYER_NAMES = {
+                                "優勝", "準優勝", "3位", "試合開始", "欠場",
+                                "道着チェック", "集合時間", "計量", "Result",
+                                "Winner", "1回戦の敗者", "2回戦の敗者"
+                            }
+                            if player_name in INVALID_PLAYER_NAMES:
+                                continue
                             # プレイヤー行に「計量」「集合」が含まれている場合は、試合行ではなくスケジュール行なのでスキップ
                             player_row_str = " ".join([clean_val(x) for x in df.iloc[r-1, :].tolist()])
                             if "計量" in player_row_str or "集合" in player_row_str:
