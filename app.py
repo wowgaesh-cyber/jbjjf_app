@@ -184,7 +184,12 @@ def extract_all_dojos(sheets):
         # Let's add at least one check to avoid complete empty if possible.
         pass
 
-    return sorted(list(dojo_set))
+    def _sort_key(name):
+        # 先頭文字がASCII範囲外（日本語等）なら後ろのグループへ
+        is_jp = ord(name[0]) > 127 if name else True
+        return (is_jp, name.lower())
+
+    return sorted(list(dojo_set), key=_sort_key)
 
 def get_schedule_data(sheets, target_dojo):
     results = []
