@@ -899,7 +899,7 @@ st.markdown("""
         color: #5f6368;
         z-index: 99998;
         line-height: 1.4;
-        text-align: left;
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
