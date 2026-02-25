@@ -883,7 +883,23 @@ st.markdown("""
     
     /* タイムテーブルのiframeを強制的に広げる */
     iframe[title="st.iframe"] {
-        height: 85vh !important;
+        height: calc(85vh - 30px) !important;
+    }
+
+    /* 固定フッター（免責事項） */
+    .disclaimer-footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background-color: #0e1117;
+        border-top: 1px solid #2a2a2e;
+        padding: 5px 12px;
+        font-size: 10px;
+        color: #5f6368;
+        z-index: 99998;
+        line-height: 1.4;
+        text-align: left;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1122,3 +1138,11 @@ if data:
 
 else:
     st.error("データ読み込みエラー")
+
+# --- 免責事項（固定フッター） ---
+st.markdown("""
+<div class="disclaimer-footer">
+  ※本アプリは個人が開発した非公式のサポートツールであり、JBJJF様とは無関係です。
+  　※実際の進行とズレが生じる場合があるため、必ず公式のタイムスケジュールと併せてご確認ください。利用に関する責任は負いかねます。
+</div>
+""", unsafe_allow_html=True)
