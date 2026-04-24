@@ -11,9 +11,12 @@ import streamlit.components.v1 as components
 
 warnings.filterwarnings('ignore')
 
+# --- 外部リンクURL定数 ---
+HELP_URL_SPREADSHEET = "#"  # モーダル説明文のヘルプリンク（差し替え用）
+
 # ページ設定 (タイトルとアイコンのみ)
 st.set_page_config(
-    page_title="JBJJF Timetable",
+    page_title="JBJJF Timetable by undesigned",
     page_icon="🥋",
     layout="wide"
 )
@@ -43,13 +46,44 @@ def get_belt_color(category_text):
         return "#ff4b4b" # デフォルト
 
 # --- データ取得ロジック ---
-SPS_URL = "https://docs.google.com/spreadsheets/u/1/d/e/2PACX-1vQoIxREOSKT14WEJRKj3VuOXhodOxydJusm-c9BZD-d9idHwXQHeCkEJJd8HzxAyH6OoeMxn9UMne2a/pub?output=xlsx"
+
+def normalize_sheets_url(raw_url: str) -> str:
+    """ユーザーが入力したURLをpub?output=xlsx形式に変換する"""
+    raw_url = raw_url.strip()
+
+    # /d/e/<長いID>/ 形式 (例: /spreadsheets/u/1/d/e/2PACX-.../pubhtml)
+    m_e = re.search(r'/spreadsheets(?:/u/\d+)?/d/e/([a-zA-Z0-9-_]+)', raw_url)
+    if m_e:
+        pub_id = m_e.group(1)
+        return f"https://docs.google.com/spreadsheets/d/e/{pub_id}/pub?output=xlsx"
+
+    # /pubhtml を含む場合 → /pub?output=xlsx に変換
+    if "/pubhtml" in raw_url:
+        base = raw_url.split("/pubhtml")[0]
+        return base + "/pub?output=xlsx"
+
+    # すでに /pub?output=xlsx 形式 → output=xlsxを保証
+    if "/pub" in raw_url:
+        if "output=xlsx" not in raw_url:
+            sep = "&" if "?" in raw_url else "?"
+            raw_url = raw_url.split("#")[0] + sep + "output=xlsx"
+        return raw_url
+
+    # 通常の編集URL: /d/<ID>/ を抽出してpub URLに変換
+    m = re.search(r'/d/([a-zA-Z0-9-_]+)', raw_url)
+    if m:
+        sheet_id = m.group(1)
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/pub?output=xlsx"
+
+    # それ以外はそのまま返す（バリデーションはロード時にエラーで判定）
+    return raw_url
 
 @st.cache_data(ttl=60)
-def load_data_and_title():
+def load_data_and_title(url: str):
     try:
-        resp = requests.get(SPS_URL, verify=False, timeout=30)
-        
+        resp = requests.get(url, verify=False, timeout=30)
+        resp.raise_for_status()
+
         extracted_title = "JBJJF Tournament"
         if "Content-Disposition" in resp.headers:
             cd = resp.headers["Content-Disposition"]
@@ -62,9 +96,10 @@ def load_data_and_title():
             extracted_title = re.sub(r'\.xlsx$', '', filename, flags=re.IGNORECASE)
 
         dfs = pd.read_excel(io.BytesIO(resp.content), sheet_name=None, header=None)
-        return dfs, extracted_title
-    except:
-        return None, "JBJJF Tournament"
+        return dfs, extracted_title, None  # (data, title, error)
+    except Exception as e:
+        return None, "JBJJF Tournament", str(e)
+
 
 def clean_val(v): return re.sub(r'\.0$', '', str(v).strip())
 
@@ -671,11 +706,32 @@ def generate_full_html(df):
 # st.set_page_config(...) # 冒頭へ移動
 
 # --- セッションステート ---
-# selected_dojo の初期化はデータ読み込み後に行うためここでは削除
+_has_url = bool(st.session_state.get("sheets_url", ""))
 
-# --- データ読み込み ---
-with st.spinner("Loading..."):
-    data, tournament_title = load_data_and_title()
+# --- 保留URLの処理（モーダルからのURL送信）---
+_pending_url = st.query_params.get('pending_url', '')
+if _pending_url:
+    _decoded = urllib.parse.unquote(_pending_url)
+    _norm = normalize_sheets_url(_decoded)
+    load_data_and_title.clear()
+    _td, _tt, _te = load_data_and_title(_norm)
+    if _te or _td is None:
+        st.session_state['_url_load_error'] = _te or '不明なエラー'
+    else:
+        st.session_state['sheets_url'] = _norm
+        st.session_state.pop('_url_load_error', None)
+    del st.query_params['pending_url']
+    st.rerun()
+
+_url_error_msg = st.session_state.pop('_url_load_error', None)
+
+# --- データ読み込み (URL設定済み時のみ) ---
+if _has_url:
+    current_url = st.session_state["sheets_url"]
+    with st.spinner("Loading..."):
+        data, tournament_title, load_error = load_data_and_title(current_url)
+else:
+    data, tournament_title, load_error = None, "JBJJF Timetable", None
 
 # --- OGP / SNS共有用メタタグ ---
 _ogp_title = f"🥋 {tournament_title}" if tournament_title else "🥋 JBJJF タイムテーブル"
@@ -780,56 +836,20 @@ st.markdown("""
         justify-content: space-between; /* 子要素を両端に配置 */
     }
     
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+    }
+
     .header-title {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        flex-grow: 1;
-        margin-right: 10px;
-        min-width: 0; /* フレックスアイテムが縮小できるようにする重要な指定 */
-    }
-    
-    .share-button {
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background-color 0.2s;
-    }
-    .share-button:hover {
-        background-color: #262730;
-    }
-    .share-icon {
-        width: 20px;
-        height: 20px;
-        fill: #fafafa;
-    }
-    
-    /* Snackbar */
-    .snackbar {
-        visibility: hidden;
-        min-width: 250px;
-        background-color: #333;
-        color: #fff;
-        text-align: center;
-        border-radius: 4px;
-        padding: 12px;
-        position: fixed;
-        z-index: 100002;
-        left: 50%;
-        bottom: 30px;
-        transform: translateX(-50%);
-        font-size: 14px;
-        opacity: 0;
-        transition: opacity 0.3s, bottom 0.3s;
-    }
-    
-    .snackbar.show {
-        visibility: visible;
-        opacity: 1;
-        bottom: 50px;
+        min-width: 0;
+        flex-shrink: 1;
     }
 
     /* Sidebar Customization */
@@ -901,10 +921,232 @@ st.markdown("""
         line-height: 1.4;
         text-align: center;
     }
+    /* 設定ボタン */
+    .settings-button {
+        cursor: pointer;
+        padding: 2px 10px;
+        border-radius: 4px;
+        border: none;
+        background: #1a73e8;
+        font-size: 12px;
+        font-weight: 600;
+        color: #fff;
+        user-select: none;
+        white-space: nowrap;
+        flex-shrink: 0;
+        line-height: 20px;
+        transition: background-color 0.2s;
+    }
+    .settings-button:hover {
+        background-color: #1557b0;
+    }
+
+    /* 共有ボタン */
+    .share-button {
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: background-color 0.2s;
+    }
+    .share-button:hover { background-color: #262730; }
+    .share-icon { width: 20px; height: 20px; fill: #fafafa; }
+
+    /* Snackbar */
+    .snackbar {
+        visibility: hidden;
+        min-width: 250px;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 4px;
+        padding: 12px;
+        position: fixed;
+        z-index: 100002;
+        left: 50%;
+        bottom: 30px;
+        transform: translateX(-50%);
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.3s, bottom 0.3s;
+    }
+    .snackbar.show { visibility: visible; opacity: 1; bottom: 50px; }
+
+    /* URL設定モーダル */
+    .url-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.75);
+        z-index: 200000;
+        align-items: center;
+        justify-content: center;
+    }
+    .url-modal-overlay.open {
+        display: flex;
+    }
+    .url-modal-box {
+        background: #181a25;
+        border: 1px solid #414144;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 480px;
+        padding: 0;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .url-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid #414144;
+    }
+    .url-modal-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #fafafa;
+    }
+    .url-modal-close-btn {
+        background: none;
+        border: none;
+        color: #a0a0a0;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        line-height: 1;
+    }
+    .url-modal-close-btn:hover {
+        background: #262730;
+        color: #fafafa;
+    }
+    .url-modal-body {
+        padding: 20px;
+    }
+    .url-modal-desc {
+        font-size: 13px;
+        color: #8085a8;
+        margin: 0 0 12px 0;
+        line-height: 1.6;
+    }
+    .url-modal-input {
+        width: 100%;
+        background: #0e1117;
+        border: 1px solid #414144;
+        border-radius: 6px;
+        color: #fafafa;
+        font-size: 14px;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+    .url-modal-input:focus {
+        border-color: #1a73e8;
+    }
+    .url-modal-help-link,
+    .url-modal-help-link:link,
+    .url-modal-help-link:visited {
+        color: #ffffff !important;
+        text-decoration: none !important;
+        margin-left: 4px;
+        vertical-align: middle;
+        opacity: 0.7;
+    }
+    .url-modal-help-link:hover {
+        color: #ffffff !important;
+        text-decoration: none !important;
+        opacity: 1.0;
+    }
+    .url-modal-help-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        border: 1.5px solid currentColor;
+        font-size: 10px;
+        font-weight: bold;
+        line-height: 1;
+    }
+    .url-modal-error {
+        color: #ff4b4b;
+        font-size: 12px;
+        margin-top: 8px;
+        min-height: 16px;
+    }
+    .url-modal-footer {
+        padding: 0 20px 20px;
+        display: flex;
+        justify-content: flex-end;
+    }
+    .url-modal-submit-btn {
+        background: #1a73e8;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 10px 24px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .url-modal-submit-btn:hover {
+        background: #1557b0;
+    }
+    .url-modal-submit-btn:disabled {
+        background: #444;
+        cursor: not-allowed;
+    }
+    /* Streamlitプライマリボタンを青系に */
+    button[data-testid="baseButton-primary"] {
+        background-color: #1a73e8 !important;
+        border-color: #1a73e8 !important;
+    }
+    button[data-testid="baseButton-primary"]:hover {
+        background-color: #1557b0 !important;
+        border-color: #1557b0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+# --- モーダルHTML ---
+_modal_auto_open = not _has_url or bool(_url_error_msg)
+_current_url_encoded = urllib.parse.quote(st.session_state.get("sheets_url", ""), safe='')
+_error_encoded = urllib.parse.quote(_url_error_msg or "", safe='')
+st.markdown(
+    f'<div id="url-modal-config" data-auto-open="{1 if _modal_auto_open else 0}" '
+    f'data-current-url="{_current_url_encoded}" data-error-msg="{_error_encoded}" style="display:none;"></div>',
+    unsafe_allow_html=True
+)
+st.markdown(f"""
+<div id="url-modal-overlay" class="url-modal-overlay">
+  <div class="url-modal-box">
+    <div class="url-modal-header">
+      <span class="url-modal-title">大会を設定</span>
+      <button class="url-modal-close-btn" id="url-modal-close-btn">✕</button>
+    </div>
+    <div class="url-modal-body">
+      <p class="url-modal-desc">
+        団体別にタイムテーブル化したい大会の、JBJJFのトーナメント表[Online]のURLを貼り付けます
+        <a href="{HELP_URL_SPREADSHEET}" target="_blank" rel="noopener noreferrer" class="url-modal-help-link" title="使い方を見る"><span class="url-modal-help-icon">?</span></a>
+      </p>
+      <input type="text" id="url-modal-input" class="url-modal-input" placeholder="https://docs.google.com/spreadsheets/d/..." />
+      <div class="url-modal-error" id="url-modal-error"></div>
+    </div>
+    <div class="url-modal-footer">
+      <button class="url-modal-submit-btn" id="url-modal-submit-btn">読み込む</button>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
 # --- メイン画面 ---
+
 if data:
     all_dojos = extract_all_dojos(data)
 
@@ -950,15 +1192,15 @@ if data:
         st.query_params['dojo'] = selected_dojo  # URLに反映
         st.rerun()
 
-    # 1. ヘッダー (Shareボタン機能修正: Event Delegation + レイアウト調整)
+    # 1. ヘッダー
     share_icon_svg = """<svg class="share-icon" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>"""
-    
     st.markdown(f"""
 <div class="custom-header">
-  <div class="header-title">🥋 {tournament_title}</div>
-  <div class="share-button" id="share-btn">
-    {share_icon_svg}
+  <div class="header-left">
+    <div class="header-title">{tournament_title}</div>
+    <div class="settings-button" id="settings-btn">大会を設定する</div>
   </div>
+  <div class="share-button" id="share-btn">{share_icon_svg}</div>
 </div>
 <div id="snackbar" class="snackbar">URLをコピーしました</div>
 """, unsafe_allow_html=True)
@@ -984,160 +1226,42 @@ if data:
     else:
         st.info(f"「{target}」の試合は見つかりませんでした。")
         
-    # --- モバイル用クリップボード共有スクリプト ---
-    components.html("""
-    <script>
-    (function() {
-        const doc = window.parent.document;
-        const STORAGE_KEY = 'streamlit_mobile_sidebar_trigger';
-        
-        // --- Clipboard Logic ---
-        const copyToClipboard = () => {
-             const url = window.parent.location.href;
-             const showSnack = () => {
-                 const x = doc.getElementById("snackbar");
-                 if (x) {
-                     x.className = "snackbar show";
-                     setTimeout(() => { x.className = x.className.replace("snackbar show", "snackbar"); }, 2000);
-                 }
-             };
-             if (navigator && navigator.clipboard) {
-                 navigator.clipboard.writeText(url).then(showSnack).catch(() => fallbackCopy(url, showSnack));
-             } else {
-                 fallbackCopy(url, showSnack);
-             }
-        };
-
-        const fallbackCopy = (url, cb) => {
-            const ta = doc.createElement("textarea");
-            ta.value = url;
-            ta.setAttribute("readonly", "");
-            ta.style.cssText = "position:absolute;left:-9999px";
-            doc.body.appendChild(ta);
-            ta.select();
-            ta.setSelectionRange(0, 99999);
-            try { if (doc.execCommand('copy')) cb(); } catch(e) {}
-            doc.body.removeChild(ta);
-        };
-
-        // --- Close Sidebar ---
-        const closeSidebar = () => {
-            // Try collapse button first
-            const btns = doc.querySelectorAll(
-                'button[data-testid="stSidebarCollapseButton"], button[data-testid="stSidebarCollapsedControl"]'
-            );
-            for (const btn of btns) {
-                // Find visible button
-                const r = btn.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0) {
-                    btn.click();
-                    return;
-                }
-            }
-            // Fallback: Escape key
-            doc.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
-                bubbles: true, cancelable: true, view: window.parent
-            }));
-        };
-
-        // --- Check if sidebar is open ---
-        const isSidebarOpen = () => {
-            const sb = doc.querySelector('section[data-testid="stSidebar"]');
-            if (!sb) return false;
-            return sb.getBoundingClientRect().width > 50;
-        };
-
-        // --- Handle touch/click on parent document ---
-        const handleInteraction = (e) => {
-            // Share button
-            if (e.target.closest && (e.target.closest('#share-btn') || e.target.closest('.share-button'))) {
-                copyToClipboard();
-                return;
-            }
-
-            // Only on mobile
-            const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
-            if (vw > 992) return;
-            if (!isSidebarOpen()) return;
-
-            const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
-            if (!sidebar) return;
-
-            const insideSidebar = sidebar.contains(e.target);
-
-            if (insideSidebar) {
-                // Dojo selection: close sidebar when radio label is tapped
-                const label = e.target.closest && e.target.closest('label');
-                if (label && label.querySelector('input[type="radio"]')) {
-                    sessionStorage.setItem(STORAGE_KEY, Date.now().toString());
-                    // Slight delay so Streamlit registers the selection first
-                    setTimeout(closeSidebar, 50);
-                }
-            } else {
-                // Outside sidebar: close it
-                // But ignore the toggle button itself
-                const toggle = e.target.closest && (
-                    e.target.closest('button[data-testid="stSidebarCollapseButton"]') ||
-                    e.target.closest('button[data-testid="stSidebarCollapsedControl"]')
-                );
-                if (!toggle) {
-                    closeSidebar();
-                }
-            }
-        };
-
-        // --- After-reload: ensure sidebar stays closed ---
-        const checkAndCloseOnLoad = () => {
-            const trigger = sessionStorage.getItem(STORAGE_KEY);
-            if (trigger && (Date.now() - parseInt(trigger) < 8000)) {
-                const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
-                if (vw <= 992) {
-                    let tries = 0;
-                    const iv = setInterval(() => {
-                        if (isSidebarOpen()) closeSidebar();
-                        tries++;
-                        if (!isSidebarOpen() || tries > 15) {
-                            clearInterval(iv);
-                            sessionStorage.removeItem(STORAGE_KEY);
-                        }
-                    }, 200);
-                } else {
-                    sessionStorage.removeItem(STORAGE_KEY);
-                }
-            }
-        };
-
-        // --- Attach listeners (once) ---
-        const attach = () => {
-            if (doc.body.dataset.sidebarListenerAttached === '1') return;
-            doc.body.dataset.sidebarListenerAttached = '1';
-
-            // touchstart for mobile immediacy, click for desktop fallback
-            doc.addEventListener('touchstart', handleInteraction, { capture: true, passive: true });
-            doc.addEventListener('click', handleInteraction, { capture: true });
-        };
-
-        // Run
-        checkAndCloseOnLoad();
-        if (doc.body) {
-            attach();
-        } else {
-            doc.addEventListener('DOMContentLoaded', attach);
-        }
-
-        // Re-attach after Streamlit re-renders
-        const obs = new MutationObserver(attach);
-        obs.observe(doc.body || doc.documentElement, { childList: true, subtree: false });
-
-    })();
-    </script>
-    """, height=0, width=0)
 
 
 
 else:
-    st.error("データ読み込みエラー")
+    # ヘッダー（データなし状態）
+    _share_icon = """<svg class="share-icon" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>"""
+    st.markdown(f"""
+<div class="custom-header">
+  <div class="header-left">
+    <div class="header-title">JBJJF Timetable</div>
+    <div class="settings-button" id="settings-btn">大会を設定する</div>
+  </div>
+  <div class="share-button" id="share-btn">{_share_icon}</div>
+</div>
+<div id="snackbar" class="snackbar">URLをコピーしました</div>
+""", unsafe_allow_html=True)
+    if load_error:
+        # データ読み込みエラー
+        st.error(f"データ読み込みエラー: {load_error}")
+        st.info("「📋 スプレッドシートを設定」ボタンから別のURLを試してください。")
+    else:
+        # URL未設定: エンプティステート表示
+        st.markdown("""
+        <style>
+        .empty-state-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 50vh;
+        }
+        .empty-state-title { font-size: 20px; font-weight: 600; color: #8b91b0; }
+        </style>
+        <div class="empty-state-wrap">
+            <div class="empty-state-title">大会が設定されていません</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # --- 免責事項（固定フッター） ---
 st.markdown("""
@@ -1146,3 +1270,229 @@ st.markdown("""
   　※実際の進行とズレが生じる場合があるため、必ず公式のタイムスケジュールと併せてご確認ください。利用に関する責任は負いかねます。
 </div>
 """, unsafe_allow_html=True)
+
+# --- クライアントサイドスクリプト ---
+components.html("""
+<script>
+(function() {
+    const doc = window.parent.document;
+    const STORAGE_KEY = 'streamlit_mobile_sidebar_trigger';
+
+    // --- モーダル操作 ---
+    const openModal = () => {
+        const overlay = doc.getElementById('url-modal-overlay');
+        if (overlay) overlay.classList.add('open');
+        setTimeout(() => {
+            const input = doc.getElementById('url-modal-input');
+            if (input) input.focus();
+        }, 100);
+    };
+    const closeModal = () => {
+        const overlay = doc.getElementById('url-modal-overlay');
+        if (overlay) overlay.classList.remove('open');
+    };
+    const showModalError = (msg) => {
+        const el = doc.getElementById('url-modal-error');
+        if (el) el.textContent = msg;
+    };
+    const submitUrl = () => {
+        const input = doc.getElementById('url-modal-input');
+        if (!input) return;
+        const url = input.value.trim();
+        if (!url) { showModalError('URLを入力してください。'); return; }
+        if (!url.includes('spreadsheets')) { showModalError('Google スプレッドシートのURLを入力してください。'); return; }
+        const btn = doc.getElementById('url-modal-submit-btn');
+        if (btn) { btn.disabled = true; btn.textContent = '読み込み中...'; }
+        const params = new URLSearchParams(window.parent.location.search);
+        const dojo = params.get('dojo') || '';
+        let newSearch = '?pending_url=' + encodeURIComponent(url);
+        if (dojo) newSearch += '&dojo=' + encodeURIComponent(dojo);
+        const newHref = (window.parent.location.pathname || '/') + newSearch;
+        // components.html の iframe は sandbox="allow-same-origin allow-scripts" で
+        // allow-top-navigation を含まないため、window.parent.location.href への
+        // 代入が Chrome 92+ でブロックされる。
+        // 回避策: 親ドキュメントに <script> を注入して親コンテキストで遷移する。
+        sessionStorage.setItem('open_sidebar_after_load', '1');
+        const navScript = doc.createElement('script');
+        navScript.textContent = 'window.location.href=' + JSON.stringify(newHref) + ';';
+        (doc.head || doc.body).appendChild(navScript);
+        (doc.head || doc.body).removeChild(navScript);
+    };
+
+    // --- クリップボード ---
+    const copyToClipboard = () => {
+        const url = window.parent.location.href;
+        const showSnack = () => {
+            const x = doc.getElementById("snackbar");
+            if (x) {
+                x.className = "snackbar show";
+                setTimeout(() => { x.className = x.className.replace("snackbar show", "snackbar"); }, 2000);
+            }
+        };
+        if (navigator && navigator.clipboard) {
+            navigator.clipboard.writeText(url).then(showSnack).catch(() => fallbackCopy(url, showSnack));
+        } else {
+            fallbackCopy(url, showSnack);
+        }
+    };
+    const fallbackCopy = (url, cb) => {
+        const ta = doc.createElement("textarea");
+        ta.value = url;
+        ta.setAttribute("readonly", "");
+        ta.style.cssText = "position:absolute;left:-9999px";
+        doc.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, 99999);
+        try { if (doc.execCommand('copy')) cb(); } catch(e) {}
+        doc.body.removeChild(ta);
+    };
+
+    // --- サイドバー操作 ---
+    const openSidebar = () => {
+        // 折りたたまれているときに表示される展開ボタンをクリック
+        const btn = doc.querySelector(
+            'button[data-testid="stSidebarCollapsedControl"], button[data-testid="stExpandSidebarButton"]'
+        );
+        if (btn) {
+            const r = btn.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) btn.click();
+        }
+    };
+    const closeSidebar = () => {
+        const btns = doc.querySelectorAll(
+            'button[data-testid="stSidebarCollapseButton"], button[data-testid="stSidebarCollapsedControl"]'
+        );
+        for (const btn of btns) {
+            const r = btn.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) { btn.click(); return; }
+        }
+        doc.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
+            bubbles: true, cancelable: true, view: window.parent
+        }));
+    };
+    const isSidebarOpen = () => {
+        const sb = doc.querySelector('section[data-testid="stSidebar"]');
+        if (!sb) return false;
+        return sb.getBoundingClientRect().width > 50;
+    };
+
+    // --- イベント委譲（一度だけ登録）---
+    const attach = () => {
+        if (doc.body.dataset.appListenersAttached === '1') return;
+        doc.body.dataset.appListenersAttached = '1';
+
+        doc.addEventListener('click', (e) => {
+            if (!e.target) return;
+            // 設定ボタン
+            if (e.target.closest && e.target.closest('#settings-btn, .settings-button')) {
+                openModal(); return;
+            }
+            // モーダルオーバーレイ背景クリック
+            if (e.target.id === 'url-modal-overlay') {
+                closeModal(); return;
+            }
+            // モーダル閉じるボタン
+            if (e.target.closest && e.target.closest('#url-modal-close-btn')) {
+                closeModal(); return;
+            }
+            // モーダル送信ボタン
+            if (e.target.closest && e.target.closest('#url-modal-submit-btn')) {
+                submitUrl(); return;
+            }
+            // 共有ボタン
+            if (e.target.closest && (e.target.closest('#share-btn') || e.target.closest('.share-button'))) {
+                copyToClipboard(); return;
+            }
+            // モバイル: サイドバー外クリックで閉じる
+            const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
+            if (vw > 992 || !isSidebarOpen()) return;
+            const sidebar = doc.querySelector('section[data-testid="stSidebar"]');
+            if (!sidebar) return;
+            if (sidebar.contains(e.target)) {
+                const label = e.target.closest && e.target.closest('label');
+                if (label && label.querySelector('input[type="radio"]')) {
+                    sessionStorage.setItem(STORAGE_KEY, Date.now().toString());
+                    setTimeout(closeSidebar, 50);
+                }
+            } else {
+                const isToggle = e.target.closest && (
+                    e.target.closest('button[data-testid="stSidebarCollapseButton"]') ||
+                    e.target.closest('button[data-testid="stSidebarCollapsedControl"]')
+                );
+                if (!isToggle) closeSidebar();
+            }
+        }, { capture: true });
+
+        doc.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.target && e.target.id === 'url-modal-input') {
+                submitUrl();
+            }
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        doc.addEventListener('touchstart', () => {}, { passive: true, capture: true });
+    };
+
+    // --- モーダル初期化（毎レンダリング時）---
+    const initModal = () => {
+        const config = doc.getElementById('url-modal-config');
+        if (!config || config.dataset.initialized === '1') return;
+        config.dataset.initialized = '1';
+
+        const currentUrl = decodeURIComponent(config.dataset.currentUrl || '');
+        const errorMsg = decodeURIComponent(config.dataset.errorMsg || '');
+        const autoOpen = config.dataset.autoOpen === '1';
+
+        const input = doc.getElementById('url-modal-input');
+        if (input && currentUrl) input.value = currentUrl;
+        if (errorMsg) showModalError(errorMsg);
+        if (autoOpen) openModal();
+    };
+
+    // --- リロード後サイドバー閉じ確認 ---
+    const checkAndCloseOnLoad = () => {
+        const trigger = sessionStorage.getItem(STORAGE_KEY);
+        if (!trigger || (Date.now() - parseInt(trigger) >= 8000)) return;
+        const vw = window.parent.innerWidth || doc.documentElement.clientWidth;
+        if (vw > 992) { sessionStorage.removeItem(STORAGE_KEY); return; }
+        let tries = 0;
+        const iv = setInterval(() => {
+            if (isSidebarOpen()) closeSidebar();
+            tries++;
+            if (!isSidebarOpen() || tries > 15) {
+                clearInterval(iv);
+                sessionStorage.removeItem(STORAGE_KEY);
+            }
+        }, 200);
+    };
+
+    // --- URL読み込み後のサイドバー自動展開 ---
+    const checkAndOpenSidebarOnLoad = () => {
+        if (!sessionStorage.getItem('open_sidebar_after_load')) return;
+        sessionStorage.removeItem('open_sidebar_after_load');
+        // サイドバーが折りたたまれている場合のみ展開
+        let tries = 0;
+        const iv = setInterval(() => {
+            if (!isSidebarOpen()) openSidebar();
+            tries++;
+            if (isSidebarOpen() || tries > 15) clearInterval(iv);
+        }, 200);
+    };
+
+    // --- 実行 ---
+    if (doc.body) attach();
+    else doc.addEventListener('DOMContentLoaded', attach);
+
+    initModal();
+    checkAndCloseOnLoad();
+    checkAndOpenSidebarOnLoad();
+
+    // Streamlitの再レンダリング後に再初期化
+    const obs = new MutationObserver(initModal);
+    obs.observe(doc.body || doc.documentElement, { childList: true, subtree: false });
+})();
+</script>
+""", height=0, width=0)
