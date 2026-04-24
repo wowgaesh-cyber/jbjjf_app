@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 warnings.filterwarnings('ignore')
 
 # --- 外部リンクURL定数 ---
-HELP_URL_SPREADSHEET = "#"  # モーダル説明文のヘルプリンク（差し替え用）
+HELP_URL_SPREADSHEET = "https://lizard-museum-724.notion.site/URL-34cb6e7d485e8099a99cf738b25660c5?pvs=143"  # モーダル説明文のヘルプリンク（差し替え用）
 
 # ページ設定 (タイトルとアイコンのみ)
 st.set_page_config(
