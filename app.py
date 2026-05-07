@@ -723,6 +723,20 @@ if _pending_url:
     del st.query_params['pending_url']
     st.rerun()
 
+# --- 共有URLからのスプレッドシート復元（sheet= パラメータ）---
+_sheet_param = st.query_params.get('sheet', '')
+if _sheet_param and not _has_url:
+    _decoded = urllib.parse.unquote(_sheet_param)
+    _norm = normalize_sheets_url(_decoded)
+    _td, _tt, _te = load_data_and_title(_norm)
+    if _te or _td is None:
+        st.session_state['_url_load_error'] = _te or '不明なエラー'
+    else:
+        st.session_state['sheets_url'] = _norm
+        st.session_state.pop('_url_load_error', None)
+    del st.query_params['sheet']
+    st.rerun()
+
 _url_error_msg = st.session_state.pop('_url_load_error', None)
 
 # --- データ読み込み (URL設定済み時のみ) ---
@@ -1322,7 +1336,19 @@ components.html("""
 
     // --- クリップボード ---
     const copyToClipboard = () => {
-        const url = window.parent.location.href;
+        // sheet= と dojo= を含む共有URLを生成
+        const config = doc.getElementById('url-modal-config');
+        const sheetsUrl = config ? decodeURIComponent(config.dataset.currentUrl || '') : '';
+        const params = new URLSearchParams(window.parent.location.search);
+        const dojo = params.get('dojo') || '';
+        let url;
+        if (sheetsUrl) {
+            const base = window.parent.location.origin + (window.parent.location.pathname || '/');
+            url = base + '?sheet=' + encodeURIComponent(sheetsUrl);
+            if (dojo) url += '&dojo=' + encodeURIComponent(dojo);
+        } else {
+            url = window.parent.location.href;
+        }
         const showSnack = () => {
             const x = doc.getElementById("snackbar");
             if (x) {
