@@ -1120,6 +1120,7 @@ _current_url_encoded = urllib.parse.quote(st.session_state.get("sheets_url", "")
 _error_encoded = urllib.parse.quote(_url_error_msg or "", safe='')
 st.markdown(
     f'<div id="url-modal-config" data-auto-open="{1 if _modal_auto_open else 0}" '
+    f'data-has-url="{1 if _has_url else 0}" '
     f'data-current-url="{_current_url_encoded}" data-error-msg="{_error_encoded}" style="display:none;"></div>',
     unsafe_allow_html=True
 )
@@ -1437,6 +1438,7 @@ components.html("""
     };
 
     // --- モーダル初期化（毎レンダリング時）---
+    const LS_KEY = 'jbjjf_sheets_url';
     const initModal = () => {
         const config = doc.getElementById('url-modal-config');
         if (!config || config.dataset.initialized === '1') return;
@@ -1445,11 +1447,37 @@ components.html("""
         const currentUrl = decodeURIComponent(config.dataset.currentUrl || '');
         const errorMsg = decodeURIComponent(config.dataset.errorMsg || '');
         const autoOpen = config.dataset.autoOpen === '1';
+        const hasUrl = config.dataset.hasUrl === '1';
 
         const input = doc.getElementById('url-modal-input');
+
+        // サーバーでURLが確認済みならlocalStorageに保存
+        if (hasUrl && currentUrl) {
+            localStorage.setItem(LS_KEY, currentUrl);
+        }
+
         if (input && currentUrl) input.value = currentUrl;
         if (errorMsg) showModalError(errorMsg);
-        if (autoOpen) openModal();
+
+        if (autoOpen) {
+            // エラーなし・URLなしの場合はlocalStorageから自動復元
+            if (!hasUrl && !errorMsg) {
+                const savedUrl = localStorage.getItem(LS_KEY);
+                if (savedUrl) {
+                    const params = new URLSearchParams(window.parent.location.search);
+                    const dojo = params.get('dojo') || '';
+                    let newSearch = '?pending_url=' + encodeURIComponent(savedUrl);
+                    if (dojo) newSearch += '&dojo=' + encodeURIComponent(dojo);
+                    const newHref = (window.parent.location.pathname || '/') + newSearch;
+                    const navScript = doc.createElement('script');
+                    navScript.textContent = 'window.location.href=' + JSON.stringify(newHref) + ';';
+                    (doc.head || doc.body).appendChild(navScript);
+                    (doc.head || doc.body).removeChild(navScript);
+                    return; // モーダルは開かない
+                }
+            }
+            openModal();
+        }
     };
 
     // --- リロード後サイドバー閉じ確認 ---
